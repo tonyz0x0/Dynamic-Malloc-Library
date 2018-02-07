@@ -12,12 +12,21 @@ void *realloc(void *ptr, size_t size) {
             free_Memory(ptr);
             return NULL;
         } else {
-            void *newMem = allocateMemory(size);
-            BlockHeader *bh = (BlockHeader*)(ptr - sizeof(BlockHeader));
-            size_t size = 1 << (bh->level + MIN_ORDER);
-            memcpy(newMem, ptr, size);
-            free_Memory(ptr);
-            return newMem;
+            void* newMem;
+            if(size > MAX_BLOCK_SIZE) {
+                newMem = request_memory_by_mmap(find_page_size(size));
+                free_Memory(ptr);
+                return newMem;
+            } else {
+                BlockHeader *bh = (BlockHeader *) ((char *) ptr - sizeof(BlockHeader));
+                int level = get_level(size);
+                if (newMem != NULL) {
+                    size_t oldSize = 1 << (bh->level + MIN_ORDER);
+                    memcpy(newMem, ptr, oldSize - sizeof(BlockHeader));
+                    free_Memory(ptr);
+                    return newMem;
+                }
+            }
         }
     }
 }

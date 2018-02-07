@@ -1,7 +1,6 @@
-#include <math.h>
+#include <stdio.h>
 #include "common.h"
-
-#define PAGESIZE sysconf(_SC_PAGESIZE)
+#include <string.h>
 
 //request memory in heap
 void *request_memory_from_heap(size_t size){
@@ -29,10 +28,23 @@ void *allocateMemory(size_t size){
     }
     //**check if there is available space in freeList***//
     int level = get_level(size);
+//    char buf[1024];
+//    snprintf(buf, 1024, "level: %d\n",
+//             level);
+//    write(STDOUT_FILENO, buf, strlen(buf) + 1);
     //Step1: prepare for the available block for required memory if necessary
-    get_available_block(freeList, level);
+    int split_level = get_available_block(freeList, level);
     //split the memory into proper buddy blocks if necessary
-    split_buddy(freeList, level);
+    split_buddy(freeList, level, split_level);
+
+//    int i = 0;
+//        char buf[4096];
+//    for(;i<=7;i++) {
+//        snprintf(buf, 4096, "freelist[%d]: 1.startAddress: %p; 2.next: %p; 3.previous: %p; 4. level: %d; 5.status: %d\n",
+//                 i, freeList[i], freeList[i]->next, freeList[i]->previous, freeList[i]->level, freeList[i]->status);
+//        write(STDOUT_FILENO, buf, strlen(buf) + 1);
+//    }
+
     //Step2: allocate block to the required memory
     if(freeList[level] != NULL) {
         BlockHeader* allocateblock = freeList[level];
@@ -43,6 +55,7 @@ void *allocateMemory(size_t size){
         }
         allocateblock->next = NULL;
         allocateblock->previous = NULL;
+        allocateblock->level = level;
         return (void*)((char*) allocateblock + sizeof(BlockHeader));
     }
     return NULL;
@@ -59,56 +72,53 @@ void init_memory(size_t size) {
 }
 
 //get available Block
-void get_available_block(BlockHeader **freeList, int level){
+int get_available_block(BlockHeader **freeList, int level){
     //if there is no available bock in freeList[level], we get to the upper freeList to Find
     //bigger block
-    //printf("test: %p\n", freeList[level]);
     if(freeList[level] == NULL) {
         int i = level + 1;
-        while((i < MAX_LEVEL) && (freeList[i] != NULL)) {
+        while((i <= MAX_LEVEL) && (freeList[i] == NULL)) {
             i++;
-            //if there is no available space in the biggest level of freeList, we need to require 
-            //another space in the heap
-            //printf("i:%d\n", i);
-            if(i >= MAX_LEVEL) {
-                heap = request_memory_from_heap(MAX_BLOCK_SIZE);
-                if(freeList[MAX_LEVEL] == NULL) {
-                    freeList[MAX_LEVEL] = heap;
-                    freeList[MAX_LEVEL]->status = 0;
-    	            freeList[MAX_LEVEL]->level = MAX_LEVEL;
-                    freeList[MAX_LEVEL]->next = NULL;
-                    freeList[MAX_LEVEL]->previous = NULL;
-                } else {
-                    BlockHeader *bh = freeList[MAX_LEVEL];
-                    while(bh->next != NULL) {
-                        bh = bh->next;
-                    }
-                    BlockHeader *newBlock = heap;
-                    newBlock->status = 0;
-                    newBlock->level = MAX_LEVEL;
-                    newBlock->next = NULL;
-                    newBlock->previous = bh;
-                    bh->next = newBlock;
-                    //bh->level = MAX_LEVEL
-                }
-            }
         }
+        //if there is no available space in the biggest level of freeList, we need to require
+        //another space in the heap
+        //printf("i:%d\n", i);
+        if(i > MAX_LEVEL) {
+            heap = (BlockHeader*)request_memory_from_heap(MAX_BLOCK_SIZE);
+            //if(freeList[MAX_LEVEL] == NULL) {
+                freeList[MAX_LEVEL] = heap;
+                freeList[MAX_LEVEL]->status = 0;
+                freeList[MAX_LEVEL]->level = MAX_LEVEL;
+                freeList[MAX_LEVEL]->next = NULL;
+                freeList[MAX_LEVEL]->previous = NULL;
+             return MAX_LEVEL;
+//            } else {
+//                BlockHeader *bh = freeList[MAX_LEVEL];
+//                while(bh->next != NULL) {
+//                    bh = bh->next;
+//                }
+//                BlockHeader *newBlock = heap;
+//                newBlock->status = 0;
+//                newBlock->level = MAX_LEVEL;
+//                newBlock->next = NULL;
+//                newBlock->previous = bh;
+//                bh->next = newBlock;
+//                bh->level = MAX_LEVEL;
+//            }
+        }
+        return i;
     }
+    return -1;
 }
 
 //split the memory
-void split_buddy(BlockHeader **freeList, int level) {
-    int split_level = MAX_LEVEL;
+void split_buddy(BlockHeader **freeList, int level, int split_level) {
     //if freeList[level] has no available space, we start to split the memory from the freeList[MAX_LEVEL]
     // to freeList[level] until there is available space in freeList[level]
-     while ((freeList[level] == NULL) && (split_level > MIN_LEVEL - 1)) {
-        // if there is no available space in freeList[split_level], go down to the lower freeList by miuns 1 level
-        if (freeList[split_level] == NULL) {
-            split_level--;
-            continue;
-        }
+    int new_level;
+     while ((freeList[level] == NULL) && (split_level > level)) {
         //there is enough space in this split_level, we start to split
-        int new_level = split_level - 1;
+        new_level = split_level - 1;
         if(freeList[new_level] == NULL) {
             // store the old freeList[split_level] address
             void *old = (void*)freeList[split_level];
@@ -172,15 +182,15 @@ void *request_memory_by_mmap(size_t pageSize) {
 void free_Memory(void* ptr) {
     BlockHeader *releasedBlock = (BlockHeader*)((char*)ptr - sizeof(BlockHeader));
     //if the memory is allocated by mmap, use munmap to free that memory
-    size_t size = 1 << (releasedBlock->level + MIN_ORDER);
+    size_t size = 1 << (releasedBlock->level + MIN_ORDER - 1);
     if(size > MAX_BLOCK_SIZE){
-        munmap(ptr, size - sizeof(BlockHeader));
+        munmap((void*)(char*)ptr - sizeof(BlockHeader), size);
         return;
     }
     releasedBlock->status = 0;//set to not used
     BlockHeader *buddyBlock = find_buddy(releasedBlock);
     //now begin to determine whether it will merge its buddy into a bigger block or not
-    while (buddyBlock != NULL && buddyBlock->status != 1) {
+    while (buddyBlock != NULL && buddyBlock->status != 1 && buddyBlock->level == releasedBlock->level) {
         if(buddyBlock->next != NULL && buddyBlock->previous == NULL) {
             buddyBlock->next->previous = NULL;
             freeList[buddyBlock->level] = buddyBlock->next;
@@ -204,9 +214,9 @@ void free_Memory(void* ptr) {
         buddyBlock = find_buddy(releasedBlock);
     }
     if(freeList[releasedBlock->level] != NULL) {
-
-        freeList[releasedBlock->level]->previous = releasedBlock;
-        releasedBlock->next = freeList[releasedBlock->level];
+        BlockHeader* temp = freeList[releasedBlock->level];
+        temp->previous = releasedBlock;
+        releasedBlock->next = temp;
     }
     freeList[releasedBlock->level] = releasedBlock;
 }
@@ -219,6 +229,15 @@ BlockHeader *find_buddy(BlockHeader* releasedBlock){
         BlockHeader *buddyBlock = (BlockHeader *) ((unsigned long int) releasedBlock ^ helper);
         return buddyBlock;
     }
+}
+
+//determine whether it will cause overflow or not
+int mulOvf(size_t *result, size_t a, size_t b) {
+    *result = a * b;
+    if(*result / a != b) {
+        return 0;
+    }
+    return 1;
 }
 //void *memalign(size_t alignment, size_t size) {
 //    int offset = (int)log2(alignment);
