@@ -2,11 +2,6 @@
 #include <math.h>
 #include "common.h"
 
-//https://github.com/shubhiM/Malloc-Library-Buddy-Allocation
-//https://github.com/RanchoCooper/buddy-memory-allocation
-//https://github.com/manthan787/malloc
-//https://github.com/nipeshroy9194/cs5600/blob/master/hw3/buddy.c
-
 #define PAGESIZE sysconf(_SC_PAGESIZE)
 
 //request memory in heap
