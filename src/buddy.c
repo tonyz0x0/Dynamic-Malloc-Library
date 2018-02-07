@@ -174,7 +174,7 @@ void free_Memory(void* ptr) {
     //if the memory is allocated by mmap, use munmap to free that memory
     size_t size = 1 << (releasedBlock->level + MIN_ORDER);
     if(size > MAX_BLOCK_SIZE){
-        munmap((void*)releasedBlock, size);
+        munmap(ptr, size - sizeof(BlockHeader));
         return;
     }
     releasedBlock->status = 0;//set to not used
