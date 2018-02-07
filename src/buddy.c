@@ -136,10 +136,11 @@ void split_buddy(BlockHeader **freeList, int level) {
 
 //Find the proper size of page
 size_t find_page_size(size_t size) {
-  size_t totalSize = size + sizeof(BlockHeader);
   size_t pageSize = PAGESIZE;
-  while (pageSize < totalSize) {
-    pageSize *= 2;
+  size_t dataSize = pageSize - sizeof(BlockHeader);
+  while (dataSize < size) {
+      pageSize *= 2;
+      dataSize = pageSize - sizeof(BlockHeader);
   }
   return pageSize;
 }
@@ -156,7 +157,7 @@ int get_level(size_t size) {
 
 void *request_memory_by_mmap(size_t pageSize) {
     void *map;
-    if((map = mmap(0, pageSize, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0)) == MAP_FAILED) {
+    if((map = mmap(0, pageSize, PROT_EXEC | PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0)) == MAP_FAILED) {
         exit(-1);
     }
     BlockHeader *bh = (BlockHeader*)map;
@@ -170,6 +171,12 @@ void *request_memory_by_mmap(size_t pageSize) {
 //
 void free_Memory(void* ptr) {
     BlockHeader *releasedBlock = (BlockHeader*)((char*)ptr - sizeof(BlockHeader));
+    //if the memory is allocated by mmap, use munmap to free that memory
+    size_t size = 1 << (releasedBlock->level + MIN_ORDER);
+    if(size > MAX_BLOCK_SIZE){
+        munmap((void*)releasedBlock, size);
+        return;
+    }
     releasedBlock->status = 0;//set to not used
     BlockHeader *buddyBlock = find_buddy(releasedBlock);
     //now begin to determine whether it will merge its buddy into a bigger block or not
