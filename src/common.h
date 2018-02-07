@@ -23,9 +23,9 @@ typedef struct Header{
 #define MIN_BLOCK_SIZE 64
 #define MAX_BLOCK_SIZE 65536
 
-__thread pthread_mutex_t lock;
-__thread BlockHeader *heap = NULL; //point to the beginning of the heap
-__thread BlockHeader *freeList[MAX_LEVEL + 1]; //create a freeList array to implement buddy allocation algorithm
+static __thread pthread_mutex_t lock;
+static __thread BlockHeader *heap = NULL; //point to the beginning of the heap
+static __thread BlockHeader *freeList[MAX_LEVEL + 1]; //create a freeList array to implement buddy allocation algorithm
 
 
 //#ifdef DEBUG

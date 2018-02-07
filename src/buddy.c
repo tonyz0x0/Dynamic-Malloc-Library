@@ -1,4 +1,3 @@
-#include <stdio.h>
 #include <math.h>
 #include "common.h"
 
@@ -18,8 +17,6 @@ void *allocateMemory(size_t size){
     //the actual size that needs to require
     size += sizeof(BlockHeader);
     int pageSize = find_page_size(size);
-    printf("size: %zu\n", size);
-    //printf("pageSize: %d\n", pageSize);
     //initialize the memory in the heap
     if(heap == NULL) {
         init_memory(MAX_BLOCK_SIZE);
@@ -32,7 +29,6 @@ void *allocateMemory(size_t size){
     }
     //**check if there is available space in freeList***//
     int level = get_level(size);
-    printf("Level: %d\n", level);
     //Step1: prepare for the available block for required memory if necessary
     get_available_block(freeList, level);
     //split the memory into proper buddy blocks if necessary
@@ -123,7 +119,8 @@ void split_buddy(BlockHeader **freeList, int level) {
             left_buddy->level = new_level;
             left_buddy->next = NULL;
             left_buddy->previous = NULL;
-            BlockHeader *right_buddy = (BlockHeader*)((char*)old + (int)pow(2, new_level + MIN_ORDER));
+            int helper = 1 << (new_level + MIN_ORDER);
+            BlockHeader *right_buddy = (BlockHeader*)((char*)old + helper);
             right_buddy->status = 0;
             right_buddy->level = new_level;
             right_buddy->next = NULL;
@@ -132,7 +129,6 @@ void split_buddy(BlockHeader **freeList, int level) {
             left_buddy->next = right_buddy;
             right_buddy->previous = left_buddy;
             freeList[new_level] = left_buddy;
-            printf("Left: %p, Right: %p\n", left_buddy, right_buddy);
         }
          split_level--;
       }
@@ -161,7 +157,6 @@ int get_level(size_t size) {
 void *request_memory_by_mmap(size_t pageSize) {
     void *map;
     if((map = mmap(0, pageSize, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0)) == MAP_FAILED) {
-        perror("mmap error: ");
         exit(-1);
     }
     BlockHeader *bh = (BlockHeader*)map;
@@ -176,15 +171,14 @@ void *request_memory_by_mmap(size_t pageSize) {
 void free_Memory(void* ptr) {
     BlockHeader *releasedBlock = (BlockHeader*)((char*)ptr - sizeof(BlockHeader));
     releasedBlock->status = 0;//set to not used
-    releasedBlock->level = -1;
     BlockHeader *buddyBlock = find_buddy(releasedBlock);
     //now begin to determine whether it will merge its buddy into a bigger block or not
     while (buddyBlock != NULL && buddyBlock->status != 1) {
-        if(buddyBlock->next != NULL) {
+        if(buddyBlock->next != NULL && buddyBlock->previous == NULL) {
             buddyBlock->next->previous = NULL;
             freeList[buddyBlock->level] = buddyBlock->next;
         }
-        if(buddyBlock->previous != NULL){
+        if(buddyBlock->previous != NULL && buddyBlock->next == NULL){
             buddyBlock->previous->next = NULL;
             freeList[buddyBlock->level] = buddyBlock->previous;
         }
@@ -211,9 +205,13 @@ void free_Memory(void* ptr) {
 }
 
 BlockHeader *find_buddy(BlockHeader* releasedBlock){
-    int helper = 1 << (releasedBlock->level + MIN_ORDER);
-    BlockHeader *buddyBlock = (BlockHeader*)((unsigned long int)releasedBlock ^ helper);
-    return buddyBlock;
+    if(releasedBlock->level == MAX_LEVEL) {
+        return NULL;
+    } else {
+        int helper = 1 << (releasedBlock->level + MIN_ORDER);
+        BlockHeader *buddyBlock = (BlockHeader *) ((unsigned long int) releasedBlock ^ helper);
+        return buddyBlock;
+    }
 }
 //void *memalign(size_t alignment, size_t size) {
 //    int offset = (int)log2(alignment);
