@@ -4,8 +4,9 @@
 
 //request memory in heap
 void *request_memory_from_heap(size_t size){
-    void *ret;
-    if((ret = sbrk(size)) < (void *)0) {
+    void *ret = sbrk(0);
+
+    if((sbrk(size)) == (void *)-1) {
         errno = ENOMEM;
         return NULL;
     }
@@ -13,6 +14,7 @@ void *request_memory_from_heap(size_t size){
 }
 
 void *allocateMemory(size_t size){
+    debug_print("Start malloc!\n");
     //the actual size that needs to require
     size += sizeof(BlockHeader);
     int pageSize = find_page_size(size);
@@ -21,9 +23,9 @@ void *allocateMemory(size_t size){
         init_memory(MAX_BLOCK_SIZE);
     }
     //Check block in the free list
-    //if the required memory is bigger than MAX_BLOCK_SIZE, we change to use memory map
+    //if the required memory is bigger than 2048 bytes, we change to use memory map
     //to allocate the memory
-    if(pageSize > MAX_BLOCK_SIZE) {
+    if(size > (MAX_BLOCK_SIZE / 2)) {
         return request_memory_by_mmap(pageSize);
     }
     //**check if there is available space in freeList***//
@@ -33,9 +35,14 @@ void *allocateMemory(size_t size){
 //             level);
 //    write(STDOUT_FILENO, buf, strlen(buf) + 1);
     //Step1: prepare for the available block for required memory if necessary
+    debug_print("Get available!\n");
     int split_level = get_available_block(freeList, level);
     //split the memory into proper buddy blocks if necessary
-    split_buddy(freeList, level, split_level);
+
+    if(split_level != -1) {
+        debug_print("Start split!\n");
+        split_buddy(freeList, level, split_level);
+    }
 
 //    int i = 0;
 //        char buf[4096];
@@ -46,6 +53,7 @@ void *allocateMemory(size_t size){
 //    }
 
     //Step2: allocate block to the required memory
+    debug_print("Start allocate!\n");
     if(freeList[level] != NULL) {
         BlockHeader* allocateblock = freeList[level];
         allocateblock->status = 1; //mark it as used
@@ -56,6 +64,7 @@ void *allocateMemory(size_t size){
         allocateblock->next = NULL;
         allocateblock->previous = NULL;
         allocateblock->level = level;
+        debug_print("Malloc Success, address is: %p!\n", (void*)((char*) allocateblock + sizeof(BlockHeader)));
         return (void*)((char*) allocateblock + sizeof(BlockHeader));
     }
     return NULL;
@@ -85,14 +94,15 @@ int get_available_block(BlockHeader **freeList, int level){
         //printf("i:%d\n", i);
         if(i > MAX_LEVEL) {
             heap = (BlockHeader*)request_memory_from_heap(MAX_BLOCK_SIZE);
-            //if(freeList[MAX_LEVEL] == NULL) {
+            if(freeList[MAX_LEVEL] == NULL) {
                 freeList[MAX_LEVEL] = heap;
                 freeList[MAX_LEVEL]->status = 0;
                 freeList[MAX_LEVEL]->level = MAX_LEVEL;
                 freeList[MAX_LEVEL]->next = NULL;
                 freeList[MAX_LEVEL]->previous = NULL;
              return MAX_LEVEL;
-//            } else {
+            }
+//            else {
 //                BlockHeader *bh = freeList[MAX_LEVEL];
 //                while(bh->next != NULL) {
 //                    bh = bh->next;
@@ -104,6 +114,7 @@ int get_available_block(BlockHeader **freeList, int level){
 //                newBlock->previous = bh;
 //                bh->next = newBlock;
 //                bh->level = MAX_LEVEL;
+//                return MAX_LEVEL;
 //            }
         }
         return i;
@@ -121,10 +132,13 @@ void split_buddy(BlockHeader **freeList, int level, int split_level) {
         new_level = split_level - 1;
         if(freeList[new_level] == NULL) {
             // store the old freeList[split_level] address
-            void *old = (void*)freeList[split_level];
+            BlockHeader *old = freeList[split_level];
             freeList[split_level] = freeList[split_level]->next;
+            if(freeList[split_level]) {
+                freeList[split_level]->previous = NULL;
+            }
             //crete two new buddy blocks
-            BlockHeader *left_buddy = (BlockHeader*)old;
+            BlockHeader *left_buddy = old;
             left_buddy->status = 0;
             left_buddy->level = new_level;
             left_buddy->next = NULL;
@@ -139,6 +153,7 @@ void split_buddy(BlockHeader **freeList, int level, int split_level) {
             left_buddy->next = right_buddy;
             right_buddy->previous = left_buddy;
             freeList[new_level] = left_buddy;
+            debug_print("Split success! Left Address is: %p, right Address is: %p\n", left_buddy, right_buddy);
         }
          split_level--;
       }
@@ -158,8 +173,9 @@ size_t find_page_size(size_t size) {
 //get the level of the BlockHeader in freeList array
 int get_level(size_t size) {
     int level = 0;
-    while(size >= MIN_BLOCK_SIZE) {
-        size /= 2;
+    int mem = 1 << MIN_ORDER;
+    while(size > mem) {
+        mem *= 2;
         level++;
     }
     return level;
@@ -180,45 +196,63 @@ void *request_memory_by_mmap(size_t pageSize) {
 
 //
 void free_Memory(void* ptr) {
+    debug_print("Start free! Entry Address is: %p\n", ptr);
     BlockHeader *releasedBlock = (BlockHeader*)((char*)ptr - sizeof(BlockHeader));
     //if the memory is allocated by mmap, use munmap to free that memory
-    size_t size = 1 << (releasedBlock->level + MIN_ORDER - 1);
-    if(size > MAX_BLOCK_SIZE){
+    size_t size = 1 << (releasedBlock->level + MIN_ORDER);
+    if(size > (MAX_BLOCK_SIZE / 2)){
+        //debug_print("Start free using munmap!\n");
         munmap((void*)(char*)ptr - sizeof(BlockHeader), size);
+        //debug_print("Free success using munmap!\n");
         return;
     }
+    //remove the releasedblock outside the freelist
     releasedBlock->status = 0;//set to not used
-    BlockHeader *buddyBlock = find_buddy(releasedBlock);
+    debug_print("releasedBlock address: %p, RBlevel: %d, status: %d\n", releasedBlock, releasedBlock->level, releasedBlock->status);
     //now begin to determine whether it will merge its buddy into a bigger block or not
-    while (buddyBlock != NULL && buddyBlock->status != 1 && buddyBlock->level == releasedBlock->level) {
-        if(buddyBlock->next != NULL && buddyBlock->previous == NULL) {
-            buddyBlock->next->previous = NULL;
-            freeList[buddyBlock->level] = buddyBlock->next;
+    debug_print("Start merge buddy!\n");
+    while(releasedBlock->level <= MAX_LEVEL) {
+        //link the heap
+        if(releasedBlock->level == MAX_LEVEL) {
+            releasedBlock->next = freeList[MAX_LEVEL];
+            if(freeList[MAX_LEVEL]) {
+                freeList[MAX_LEVEL]->previous = releasedBlock;
+            }
+            releasedBlock->previous = NULL;
+            freeList[MAX_LEVEL] = releasedBlock;
+            break;
         }
-        if(buddyBlock->previous != NULL && buddyBlock->next == NULL){
-            buddyBlock->previous->next = NULL;
-            freeList[buddyBlock->level] = buddyBlock->previous;
+        BlockHeader *buddyBlock = find_buddy(releasedBlock);
+        debug_print("BuddyBlock address: %p, BBlevel: %d, status: %d\n", buddyBlock, buddyBlock->level, buddyBlock->status);
+        if(buddyBlock != NULL && buddyBlock->status != 1 && buddyBlock->level == releasedBlock->level) {
+            //remove the buddy out of the freelist
+            if(buddyBlock->previous) {
+                buddyBlock->previous->next = buddyBlock->next;
+            }
+            if(buddyBlock->next) {
+                buddyBlock->next->previous = buddyBlock->previous;
+            }
+            buddyBlock->next = NULL;
+            buddyBlock->previous = NULL;
+            buddyBlock->status = 0;
+            //judge which address is bigger
+            if((void*)releasedBlock > (void*)buddyBlock) {
+                releasedBlock = buddyBlock;
+            }
+            releasedBlock->level += 1;
+            continue;
+        } else {
+            //no buddy can be merged further, then add the merged block into its freelist
+            releasedBlock->next = freeList[releasedBlock->level];
+            if(freeList[releasedBlock->level]) {
+                freeList[releasedBlock->level]->previous = releasedBlock;
+            }
+            releasedBlock->previous = NULL;
+            freeList[releasedBlock->level] = releasedBlock;
+            break;
         }
-        if(buddyBlock->next == NULL && buddyBlock->previous == NULL) {
-            freeList[buddyBlock->level] = NULL;
-        }
-        if(buddyBlock->next != NULL && buddyBlock->previous != NULL) {
-            buddyBlock->next->previous = buddyBlock->previous;
-            buddyBlock->previous->next = buddyBlock->next;
-            freeList[buddyBlock->level] = buddyBlock->previous;
-        }
-        if(releasedBlock > buddyBlock) {
-            releasedBlock = buddyBlock;
-        }
-        releasedBlock->level += 1;
-        buddyBlock = find_buddy(releasedBlock);
     }
-    if(freeList[releasedBlock->level] != NULL) {
-        BlockHeader* temp = freeList[releasedBlock->level];
-        temp->previous = releasedBlock;
-        releasedBlock->next = temp;
-    }
-    freeList[releasedBlock->level] = releasedBlock;
+    debug_print("free Success!\n");
 }
 
 BlockHeader *find_buddy(BlockHeader* releasedBlock){
@@ -226,7 +260,7 @@ BlockHeader *find_buddy(BlockHeader* releasedBlock){
         return NULL;
     } else {
         int helper = 1 << (releasedBlock->level + MIN_ORDER);
-        BlockHeader *buddyBlock = (BlockHeader *) ((unsigned long int) releasedBlock ^ helper);
+        BlockHeader *buddyBlock = (BlockHeader *) ((uintptr_t) releasedBlock ^ helper);
         return buddyBlock;
     }
 }
@@ -238,6 +272,10 @@ int mulOvf(size_t *result, size_t a, size_t b) {
         return 0;
     }
     return 1;
+}
+
+size_t size_align(size_t size) {
+    return ((((size - 1) >> 3) << 3) + (1 << 3));
 }
 //void *memalign(size_t alignment, size_t size) {
 //    int offset = (int)log2(alignment);
