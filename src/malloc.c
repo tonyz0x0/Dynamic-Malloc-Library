@@ -7,6 +7,7 @@ void *malloc(size_t size) {
     if(size <= 0) {
         return NULL;
     }
+    size = align8(size);
     void *res;
     pthread_mutex_lock(&lock);
     //size =  size_align(size);
