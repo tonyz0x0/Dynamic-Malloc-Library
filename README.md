@@ -43,6 +43,9 @@ $ make check
 ```
 The t-test1.c file contains some parameters for testing. Change different value of them can change different testing level.
 
+### Limitation and Bug
+There is no bug, the whole program can run successfully in 5 threads and test level 10. However, the efficience is a big problem, the program runs relatively slow and can not be equivalent to the real linux malloc library. So, there is still a long way to go, lol!!
+
 ### Further Improvements
 1. Per-Core Malloc Arenas
 2. Support for fork

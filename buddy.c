@@ -24,13 +24,12 @@ void *allocateMemory(size_t size){
     //Check block in the free list
     //if the required memory is bigger than 2048 bytes, we change to use memory map
     //to allocate the memory
-    size_t pageSize = find_page_size(size);
-    if(pageSize > (MAX_BLOCK_SIZE / 2)) {
+    int level = get_level(size);
+    if(level > (MAX_LEVEL - 1)) {
+        size_t pageSize = find_page_size(size);
         return request_memory_by_mmap(pageSize);
     }
-
     //**check if there is available space in freeList***//
-    int level = get_level(size);
 
     //Step1: prepare for the available block for required memory if necessary
 
@@ -192,13 +191,21 @@ void free_Memory(void* ptr) {
         }
         BlockHeader *buddyBlock = find_buddy(releasedBlock);
 
-        if(buddyBlock != NULL && buddyBlock->status != 1 && buddyBlock->level == releasedBlock->level) {
+        if((buddyBlock != NULL) && (buddyBlock->status != 1) && (buddyBlock->level == releasedBlock->level)) {
             //remove the buddy out of the freelist
-            if(buddyBlock->previous) {
-                buddyBlock->previous->next = buddyBlock->next;
+            if((buddyBlock->previous) == NULL && buddyBlock->next != NULL) {
+                buddyBlock->next->previous = NULL;
+                freeList[buddyBlock->level] = buddyBlock->next;
             }
-            if(buddyBlock->next) {
+            else if(buddyBlock->previous != NULL && buddyBlock->next != NULL){
+                buddyBlock->previous->next = buddyBlock->next;
                 buddyBlock->next->previous = buddyBlock->previous;
+            }
+            else if(buddyBlock->previous != NULL && buddyBlock->next == NULL) {
+                buddyBlock->previous->next = NULL;
+            }
+            else if(buddyBlock->previous == NULL && buddyBlock->next == NULL) {
+                freeList[buddyBlock->level] = NULL;
             }
             buddyBlock->next = NULL;
             buddyBlock->previous = NULL;

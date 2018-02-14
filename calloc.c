@@ -16,6 +16,5 @@ void *calloc(size_t nmemb, size_t size) {
         return NULL;
     }
     memset(res, 0, totalSize);
-    //debug_print("calloc sucess!\n");
     return res;
 }

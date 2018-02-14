@@ -7,7 +7,6 @@
 #endif
 
 void *memalign(size_t alignment, size_t size) {
-
     void *ptr = NULL;
 
     if(alignment && size)
