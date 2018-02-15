@@ -351,7 +351,7 @@ void malloc_stats() {
 }
 
 /*
- * Initialize the library, create first arena in the main thread;
+ * Initialize the first arena in the main thread;
  */
 ArenaHeader* init_main_arena()
 {
@@ -381,6 +381,54 @@ ArenaHeader* init_main_arena()
     info->uordblks = 0;
 
     mainThreadStart = arena;
+    return arena;
+}
+
+/*
+ * Initialize the new arena in thread;
+ */
+ArenaHeader* init_thread_arena()
+{
+    /*
+     * initialize arena meta data
+     */
+    ArenaHeader *arena = (ArenaHeader*)request_memory_by_mmap(sizeof(ArenaHeader));
+    arena->status = 1;
+    arena->next = NULL;
+    arena->previous = NULL;
+    arena->startAddr = NULL;
+    memset(&(arena->lock), 0, sizeof(pthread_mutex_t));
+    memset(&(arena->blockNum), 0, NUM_LINKS * sizeof(uint32_t));
+
+    /*
+     * initialize mallinfo meta data
+     */
+    info = (mallinfo*)((char*)arena + sizeof(ArenaHeader));
+    info->blockNum = 0;
+    info->alloReq = 0;
+    info->arenaSize = 0;
+    info->arenNum = 1;
+    info->blockFree = 0;
+    info->blockUsed = 0;
+    info->fordblks = 0;
+    info->freeReq = 0;
+    info->uordblks = 0;
+
+    /*
+     * link the arena in a circle double linked list
+     */
+    ArenaHeader *current = mainThreadStart;
+    if(current->next == NULL) {
+        current->next = arena;
+        arena->previous = current;
+        arena->next = current;
+        current->previous = arena;
+    } else {
+        current->previous->next = arena;
+        arena->previous = current->previous;
+        arena->next = current;
+        current->previous = arena;
+    }
     return arena;
 }
 
