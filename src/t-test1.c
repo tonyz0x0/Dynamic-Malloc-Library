@@ -18,7 +18,7 @@
 #define TEST 10
 #endif
 
-#define N_TOTAL		500
+#define N_TOTAL		50
 #ifndef N_THREADS
 #define N_THREADS	5
 #endif
@@ -277,6 +277,7 @@ static void bin_alloc(struct bin *m, size_t size, unsigned r)
 #endif
     r %= 1024;
 
+    //if (r < 4)
     if (r < 4)
     {
         /* memalign */
@@ -284,6 +285,7 @@ static void bin_alloc(struct bin *m, size_t size, unsigned r)
         m->ptr = memalign(sizeof(int) << r, size);
     }
     else
+    //if (r < 20)
     if (r < 20)
     {
         /* calloc */
@@ -302,6 +304,7 @@ static void bin_alloc(struct bin *m, size_t size, unsigned r)
         }
 #endif
     }
+        //if (r < 100)
     else if ((r < 100) && (m->size < REALLOC_MAX))
     {
         /* realloc */

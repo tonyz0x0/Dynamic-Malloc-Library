@@ -14,7 +14,7 @@
 
 #define PAGESIZE sysconf(_SC_PAGESIZE)
 #define MIN_LEVEL 0
-#define MAX_LEVEL 8 /* 0~7 is for buddy allocation, 8 is for mmap section */
+#define MAX_LEVEL 7 /* 0~7 is for buddy allocation*/
 #define MIN_ORDER 5 //2^5->32
 #define MAX_ORDER 12 // 2^12->4096
 #define MIN_BLOCK_SIZE 32
@@ -50,7 +50,6 @@ typedef struct arenaheader{
     uint32_t status;
     uint32_t blockNum[NUM_LINKS];
     BlockHeader *freeList[NUM_LINKS];
-    void *startAddr;
     struct arenaheader *next;
     struct arenaheader *previous;
 } ArenaHeader;
@@ -58,31 +57,22 @@ typedef struct arenaheader{
 /*
  * global variables
  */
-int init_main_arena_flag = 0;
-ArenaHeader* mainArenaAddr = NULL;
-pthread_mutex_t global_lock = PTHREAD_MUTEX_INITIALIZER;
+extern ArenaHeader *mainThreadStart;
 
 /*
  * struct for malloc info
  */
 typedef struct Struct{
-    unsigned int arenaSize;     /* Total size of arena allocated with sbrk/mmap */
-    unsigned int arenNum;   /* Total number of arenas */
-    unsigned int blockNum;    /* Total number of blocks for each arena*/
-    unsigned int blockUsed;     /* Number of Used blocks for each arena */
-    unsigned int blockFree;    /* Number of Free blocks for each arena */
-    unsigned int alloReq;   /* Total allocation requests for each arena */
-    unsigned int freeReq;   /* Total free requests for each arena */
-    unsigned int uordblks;  /* Total allocated space (bytes) */
-    unsigned int fordblks;  /* Total free space (bytes) */
+    unsigned long int arenaSize;     /* Total size of arena allocated with sbrk/mmap */
+    unsigned long int arenaNum;   /* Total number of arenas */
+    unsigned long int blockNum;    /* Total number of blocks for each arena*/
+    unsigned long int blockUsed;     /* Number of Used blocks for each arena */
+    unsigned long int blockFree;    /* Number of Free blocks for each arena */
+    unsigned long int alloReq;   /* Total allocation requests for each arena */
+    unsigned long int freeReq;   /* Total free requests for each arena */
 } mallinfo;
 
-typedef void *(*my__malloc_hook)(size_t size, const void *caller);
-typedef void (*my__free_hook)(void *ptr, const void *caller);
-typedef void *(*my__realloc_hook)(void *ptr, size_t size, const void *caller);
-typedef void *(*my__calloc_hook)(size_t nmemb, size_t size, const void *caller);
-typedef void *(*my__memalign_hool)(size_t alignment, size_t size);
-void *request_memory_from_heap(size_t size);
+//void *request_memory_from_heap(size_t size);
 void *allocateMemory(size_t size);
 void split_buddy(BlockHeader **freeList, int level, int split_level);
 size_t find_page_size(size_t size);
@@ -97,8 +87,18 @@ void *malloc(size_t size);
 void *reallocarray(void *ptr, size_t nmemb, size_t size);
 void *memalign(size_t alignment, size_t size);
 int posix_memalign(void **memptr, size_t alignment, size_t size);
-void malloc_stats();
-
+void malloc_stats(void);
+BlockHeader *find_mmap_block(ArenaHeader *arena, size_t size);
+BlockHeader *mmap_new_block(size_t pageSize);
+BlockHeader *mmap_new_heap(ArenaHeader *arena, size_t size);
+void remove_mmap_block(ArenaHeader *arena, BlockHeader *releasedBlock);
+ArenaHeader* init_main_arena();
+ArenaHeader* init_thread_arena();
+BlockHeader *find_block(ArenaHeader *arena, size_t size);
+void *request_memory_by_mmap(size_t pageSize);
+void prepare(void);
+void parent(void);
+void child(void);
 //size_t align8(size_t size);
 //int judge_address(void *addr);
 

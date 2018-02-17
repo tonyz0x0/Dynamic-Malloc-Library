@@ -5,22 +5,15 @@
 __thread ArenaHeader *arena = NULL;
 __thread mallinfo *info = NULL;
 int arenaNum = 0;
-ArenaHeader *mainThreadStart;
-
-//request memory in heap
-//void *request_memory_from_heap(size_t size){
-//    void *ret = sbrk(0);
-//    if((sbrk(size)) == (void *)-1) {
-//        errno = ENOMEM;
-//        return NULL;
-//    }
-//    return ret;
-//}
+ArenaHeader *mainThreadStart = NULL;
+int init_main_arena_flag = 0;
+pthread_mutex_t global_lock = PTHREAD_MUTEX_INITIALIZER;
 
 void *allocateMemory(size_t size){
     if(size <= 0) {
         return NULL;
     }
+    //pthread_atfork(prepare, parent, child);
     /*
      * initialize main thread arena
      */
@@ -29,12 +22,14 @@ void *allocateMemory(size_t size){
         arena = init_main_arena();
         //set init_main_arena_flag to 1
         init_main_arena_flag = 1;
+        mainThreadStart = arena;
+        arenaNum++;
     }
     /*
      * initialize thread arena or find spare arena
      */
     if (arena == NULL) {
-        if(arenaNum <= NUM_ARENA_64) {
+        if(arenaNum < NUM_ARENA_64) {
             arena = init_thread_arena();
             arenaNum++;
         } else {
@@ -42,27 +37,27 @@ void *allocateMemory(size_t size){
             while((current != NULL) && (current->status == 1)) {
                 current = current->next;
             }
+            current->status = 1;
             arena = current;
+            info = (mallinfo*)((char*)current + sizeof(ArenaHeader));
         }
     }
-
+    info->arenaNum = arenaNum;
     pthread_mutex_lock(&arena->lock);
     info->alloReq++;
     //the actual size that needs to require
     BlockHeader *ret = NULL;
     size += sizeof(BlockHeader);
     int level = get_level(size);
-
     /* If the required memory is bigger than 2048 bytes, we go to find free block in mmap list
      * to allocate the memory. If there is no free mmap block, we will call mmap()
      * to ask for a new memory block.
      */
      if(level > MAX_LEVEL) {
          size_t pageSize = find_page_size(size);
-         if ((ret = find_mmap_block(arena, pageSize)) != NULL ||
-             (ret = mmap_new_block(pageSize)) != NULL) {
+         if ((ret = mmap_new_block(pageSize)) != NULL) {
              info->blockUsed++;
-             info->uordblks += pageSize;
+             info->blockFree--;
              ret->status = 1;
              ret->next = NULL;
              ret->previous = NULL;
@@ -78,48 +73,16 @@ void *allocateMemory(size_t size){
              if ((ret = find_block(arena, blockSize)) != NULL ||
                  (ret = mmap_new_heap(arena, blockSize)) != NULL) {
                  info->blockUsed++;
-                 info->uordblks += blockSize;
+                 info->blockFree--;
                  ret->status = 1;
                  ret->next = NULL;
                  ret->previous = NULL;
                  ret->level = get_level(blockSize);
              }
          }
-         pthread_mutex_unlock(&arena->lock);
-         return (void*)((char*) ret + sizeof(BlockHeader));
-}
-
-/*
- * Find free block in freeList[8] (mmapped blocks), return NULL when not found
- */
-BlockHeader *find_mmap_block(ArenaHeader *arena, size_t size)
-{
-    BlockHeader *cur = arena->freeList[MAX_LEVEL];
-    int level = get_level(size);
-    while ((cur != NULL) && (cur->level < level)) {
-        cur = cur->next;
-    }
-
-    if((cur->previous) == NULL && cur->next != NULL) {
-        cur->next->previous = NULL;
-        arena->freeList[MAX_LEVEL] = cur->next;
-        arena->blockNum[MAX_LEVEL]--;
-    }
-    else if(cur->previous != NULL && cur->next != NULL){
-        cur->previous->next = cur->next;
-        cur->next->previous = cur->previous;
-        arena->blockNum[MAX_LEVEL]--;
-    }
-    else if(cur->previous != NULL && cur->next == NULL) {
-        cur->previous->next = NULL;
-        arena->blockNum[MAX_LEVEL]--;
-    }
-    else if(cur->previous == NULL && cur->next == NULL) {
-        arena->freeList[MAX_LEVEL] = NULL;
-        arena->blockNum[MAX_LEVEL]--;
-    }
-
-    return cur;
+        arena->status = 0;
+        pthread_mutex_unlock(&arena->lock);
+        return (void*)((char*) ret + sizeof(BlockHeader));
 }
 
 /*
@@ -127,7 +90,7 @@ BlockHeader *find_mmap_block(ArenaHeader *arena, size_t size)
  */
 BlockHeader *mmap_new_block(size_t pageSize)
 {
-    BlockHeader* newBlock = (BlockHeader *)request_memory_from_heap(pageSize);
+    BlockHeader* newBlock = (BlockHeader *)request_memory_by_mmap(pageSize);
     newBlock->status = 0;
     newBlock->level = get_level(pageSize);
     newBlock->next = NULL;
@@ -148,12 +111,12 @@ BlockHeader *find_block(ArenaHeader *arena, size_t size) {
     int split_level = level;
     if (arena->freeList[level] == NULL) {
         int i = level + 1;
-        while ((i <= (MAX_LEVEL - 1)) && (arena->freeList[i] == NULL)) {
+        while ((i <= (MAX_LEVEL)) && (arena->freeList[i] == NULL)) {
             i++;
         }
         //if there is no available space in the biggest level of freeList, return NULL
 
-        if (i > (MAX_LEVEL - 1)) {
+        if (i > (MAX_LEVEL)) {
             return NULL;
         } else {
             split_level = i;
@@ -181,7 +144,7 @@ BlockHeader *find_block(ArenaHeader *arena, size_t size) {
  */
 BlockHeader *mmap_new_heap(ArenaHeader *arena, size_t size)
 {
-    arena->freeList[MAX_LEVEL - 1] = (BlockHeader*)request_memory_by_mmap(PAGESIZE);
+    arena->freeList[MAX_LEVEL] = (BlockHeader*)request_memory_by_mmap(PAGESIZE);
     return find_block(arena, size);
 }
 
@@ -216,6 +179,8 @@ void split_buddy(BlockHeader **freeList, int level, int split_level) {
             left_buddy->next = right_buddy;
             right_buddy->previous = left_buddy;
             freeList[new_level] = left_buddy;
+            info->blockNum++;
+            info->blockFree++;
             //debug_print("Split success! Left Address is: %p, right Address is: %p\n", left_buddy, right_buddy);
         }
         split_level--;
@@ -260,9 +225,12 @@ void free_Memory(void* ptr) {
     //if the memory is allocated by mmap, use munmap to free that memory
     size_t size = 1 << (releasedBlock->level + MIN_ORDER);
     if(size > (MAX_BLOCK_SIZE / 2)){
-        munmap((void*)(char*)ptr - sizeof(BlockHeader), size);
-
-        pthread_mutex_unlock(&lock);
+        //remove_mmap_block(arena, releasedBlock);
+        munmap((void*)releasedBlock, size);
+        info->arenaSize -= size;
+        info->blockUsed--;
+        info->blockFree++;
+        pthread_mutex_unlock(&arena->lock);
         return;
     }
 
@@ -273,13 +241,13 @@ void free_Memory(void* ptr) {
     while(releasedBlock->level <= MAX_LEVEL) {
         //link the heap
         if(releasedBlock->level == MAX_LEVEL) {
-            releasedBlock->next = freeList[MAX_LEVEL];
-            if(freeList[MAX_LEVEL]) {
-                freeList[MAX_LEVEL]->previous = releasedBlock;
+            releasedBlock->next = arena->freeList[MAX_LEVEL];
+            if(arena->freeList[MAX_LEVEL]) {
+                arena->freeList[MAX_LEVEL]->previous = releasedBlock;
             }
             releasedBlock->previous = NULL;
-            freeList[MAX_LEVEL] = releasedBlock;
-            pthread_mutex_unlock(&lock);
+            arena->freeList[MAX_LEVEL] = releasedBlock;
+            pthread_mutex_unlock(&arena->lock);
             break;
         }
         BlockHeader *buddyBlock = find_buddy(releasedBlock);
@@ -289,7 +257,7 @@ void free_Memory(void* ptr) {
             //remove the buddy out of the freelist
             if((buddyBlock->previous) == NULL && buddyBlock->next != NULL) {
                 buddyBlock->next->previous = NULL;
-                freeList[buddyBlock->level] = buddyBlock->next;
+                arena->freeList[buddyBlock->level] = buddyBlock->next;
             }
             else if(buddyBlock->previous != NULL && buddyBlock->next != NULL){
                 buddyBlock->previous->next = buddyBlock->next;
@@ -299,7 +267,7 @@ void free_Memory(void* ptr) {
                 buddyBlock->previous->next = NULL;
             }
             else if(buddyBlock->previous == NULL && buddyBlock->next == NULL) {
-                freeList[buddyBlock->level] = NULL;
+                arena->freeList[buddyBlock->level] = NULL;
             }
             buddyBlock->next = NULL;
             buddyBlock->previous = NULL;
@@ -312,16 +280,18 @@ void free_Memory(void* ptr) {
             continue;
         } else {
             //no buddy can be merged further, then add the merged block into its freelist
-            releasedBlock->next = freeList[releasedBlock->level];
-            if(freeList[releasedBlock->level]) {
-                freeList[releasedBlock->level]->previous = releasedBlock;
+            releasedBlock->next = arena->freeList[releasedBlock->level];
+            if(arena->freeList[releasedBlock->level]) {
+                arena->freeList[releasedBlock->level]->previous = releasedBlock;
             }
             releasedBlock->previous = NULL;
-            freeList[releasedBlock->level] = releasedBlock;
-            pthread_mutex_unlock(&lock);
+            arena->freeList[releasedBlock->level] = releasedBlock;
+            pthread_mutex_unlock(&arena->lock);
             break;
         }
     }
+    info->blockFree++;
+    info->blockUsed--;
 }
 
 BlockHeader *find_buddy(BlockHeader* releasedBlock){
@@ -331,22 +301,6 @@ BlockHeader *find_buddy(BlockHeader* releasedBlock){
         int helper = 1 << (releasedBlock->level + MIN_ORDER);
         BlockHeader *buddyBlock = (BlockHeader *) ((uintptr_t) releasedBlock ^ helper);
         return buddyBlock;
-    }
-}
-
-
-
-void malloc_stats() {
-    if(arena == NULL) return;
-    printf("==================Malloc Status===================");
-    printf("Total size of arena allocated with sbrk/mmap: %lu\n", arena-);
-    printf("Total number of bins: %i\n", NUM_BINS);
-    for (int i = 0; i < NUM_BINS; i++) {
-        printf("Number of total blocks in bin %i: %i\n", i, arena->freeNum[i] + arena->usedNum[i]);
-        printf("Number of used blocks in bin %i: %i\n", i, arena->usedNum[i]);
-        printf("Number of free blocks in bin %i: %i\n", i, arena->freeNum[i]);
-        printf("Number of allocations requests for bin %i: %i\n", i, arena->mallocRequests[i]);
-        printf("Number of free requests for bin %i: %i\n\n", i, arena->freeRequests[i]);
     }
 }
 
@@ -362,7 +316,7 @@ ArenaHeader* init_main_arena()
     arena->status = 1;
     arena->next = NULL;
     arena->previous = NULL;
-    arena->startAddr = NULL;
+    //arena->lock = PTHREAD_MUTEX_INITIALIZER;
     memset(&(arena->lock), 0, sizeof(pthread_mutex_t));
     memset(&(arena->blockNum), 0, NUM_LINKS * sizeof(uint32_t));
 
@@ -373,12 +327,10 @@ ArenaHeader* init_main_arena()
     info->blockNum = 0;
     info->alloReq = 0;
     info->arenaSize = 0;
-    info->arenNum = 1;
+    info->arenaNum = 1;
     info->blockFree = 0;
     info->blockUsed = 0;
-    info->fordblks = 0;
     info->freeReq = 0;
-    info->uordblks = 0;
 
     mainThreadStart = arena;
     return arena;
@@ -396,7 +348,7 @@ ArenaHeader* init_thread_arena()
     arena->status = 1;
     arena->next = NULL;
     arena->previous = NULL;
-    arena->startAddr = NULL;
+    //arena->lock = PTHREAD_MUTEX_INITIALIZER;
     memset(&(arena->lock), 0, sizeof(pthread_mutex_t));
     memset(&(arena->blockNum), 0, NUM_LINKS * sizeof(uint32_t));
 
@@ -407,12 +359,10 @@ ArenaHeader* init_thread_arena()
     info->blockNum = 0;
     info->alloReq = 0;
     info->arenaSize = 0;
-    info->arenNum = 1;
+    info->arenaNum = 1;
     info->blockFree = 0;
     info->blockUsed = 0;
-    info->fordblks = 0;
     info->freeReq = 0;
-    info->uordblks = 0;
 
     /*
      * link the arena in a circle double linked list
@@ -437,12 +387,12 @@ ArenaHeader* init_thread_arena()
  */
 void prepare(void)
 {
-    pthread_mutex_lock(&global_lock);
-    ArenaHeader *ah = mainArenaAddr;
-    while (ah) {
-        pthread_mutex_lock(&ah->lock);
-        ah = ah->next;
-    }
+    //pthread_mutex_lock(&global_lock);
+    ArenaHeader *current = mainThreadStart;
+    do {
+        pthread_mutex_lock(&current->lock);
+        current = current->next;
+    } while(current->next != mainThreadStart);
 }
 
 /*
@@ -450,12 +400,12 @@ void prepare(void)
  */
 void parent(void)
 {
-    ArenaHeader *ah = mainArenaAddr;
-    while (ah) {
-        pthread_mutex_unlock(&ah->lock);
-        ah = ah->next;
-    }
-    pthread_mutex_unlock(&global_lock);
+    ArenaHeader *current = mainThreadStart;
+    do {
+        pthread_mutex_unlock(&current->lock);
+        current = current->next;
+    } while(current->next != mainThreadStart);
+    //pthread_mutex_unlock(&global_lock);
 }
 
 /*
@@ -463,12 +413,12 @@ void parent(void)
  */
 void child(void)
 {
-    ArenaHeader *ah = mainArenaAddr;
-    while (ah) {
-        pthread_mutex_unlock(&ah->lock);
-        ah = ah->next;
-    }
-    pthread_mutex_unlock(&global_lock);
+    ArenaHeader *current = mainThreadStart;
+    do {
+        pthread_mutex_unlock(&current->lock);
+        current = current->next;
+    } while(current->next != mainThreadStart);
+    //pthread_mutex_unlock(&global_lock);
 }
 
 
