@@ -12,6 +12,7 @@
 #define USE_MALLOC	0
 #define USE_SPROC	0
 #define USE_THR		0
+//#define TEST_FORK 1
 
 /* Testing level */
 #ifndef TEST
@@ -164,6 +165,8 @@ typedef int pthread_t;
 
 #include <sys/types.h>
 #include <malloc.h>
+#include <unistd.h>
+#include <sys/wait.h>
 
 
 /*

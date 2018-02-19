@@ -55,6 +55,15 @@ typedef struct arenaheader{
 } ArenaHeader;
 
 /*
+ * struct for thread
+ */
+typedef struct threadheader{
+    pthread_t tid;
+    ArenaHeader *arena;
+    struct threadheader *next;
+} ThreadHeader;
+
+/*
  * global variables
  */
 extern ArenaHeader *mainThreadStart;
@@ -88,14 +97,16 @@ void *reallocarray(void *ptr, size_t nmemb, size_t size);
 void *memalign(size_t alignment, size_t size);
 int posix_memalign(void **memptr, size_t alignment, size_t size);
 void malloc_stats(void);
-BlockHeader *find_mmap_block(ArenaHeader *arena, size_t size);
+//BlockHeader *find_mmap_block(ArenaHeader *arena, size_t size);
 BlockHeader *mmap_new_block(size_t pageSize);
 BlockHeader *mmap_new_heap(ArenaHeader *arena, size_t size);
-void remove_mmap_block(ArenaHeader *arena, BlockHeader *releasedBlock);
+//void remove_mmap_block(ArenaHeader *arena, BlockHeader *releasedBlock);
 ArenaHeader* init_main_arena();
 ArenaHeader* init_thread_arena();
 BlockHeader *find_block(ArenaHeader *arena, size_t size);
 void *request_memory_by_mmap(size_t pageSize);
+void *request_memory_from_sbrk(size_t size);
+void create_thread_header(ArenaHeader *arena);
 void prepare(void);
 void parent(void);
 void child(void);

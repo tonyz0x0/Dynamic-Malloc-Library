@@ -6,8 +6,10 @@ __thread ArenaHeader *arena = NULL;
 __thread mallinfo *info = NULL;
 int arenaNum = 0;
 ArenaHeader *mainThreadStart = NULL;
+ThreadHeader *startThreadHeader = NULL;
 int init_main_arena_flag = 0;
 pthread_mutex_t global_lock = PTHREAD_MUTEX_INITIALIZER;
+__thread pthread_t tid;
 
 void *allocateMemory(size_t size){
     if(size <= 0) {
@@ -18,21 +20,43 @@ void *allocateMemory(size_t size){
      * initialize main thread arena
      */
     if(init_main_arena_flag == 0) {
+        pthread_mutex_lock(&global_lock);
         //initialize main arena
+        debug_print("Thread tid: %u needs a main new arena.\n", (unsigned int)tid);
         arena = init_main_arena();
         //set init_main_arena_flag to 1
         init_main_arena_flag = 1;
         mainThreadStart = arena;
         arenaNum++;
+        create_thread_header(arena);
+        pthread_mutex_unlock(&global_lock);
     }
     /*
-     * initialize thread arena or find spare arena
+     * initialize thread arena or find spare arena. Judge whether the thread is created or not
+     * before, if it was once existed, just assigned the old arena to that thread.
      */
+    tid = pthread_self();
+    ThreadHeader *currentThread = startThreadHeader;
+    do{
+        if(currentThread->tid == tid) {
+            arena = currentThread->arena;
+            info = (mallinfo*)((char*)arena + sizeof(ArenaHeader));
+            break;
+        }
+        currentThread = currentThread->next;
+    } while(currentThread != startThreadHeader);
+
     if (arena == NULL) {
         if(arenaNum < NUM_ARENA_64) {
+            debug_print("Thread tid: %u needs a new arena.\n", (unsigned int)tid);
+            pthread_mutex_lock(&global_lock);
             arena = init_thread_arena();
+            create_thread_header(arena);
             arenaNum++;
+            pthread_mutex_unlock(&global_lock);
         } else {
+            debug_print("Thread tid: %u goes to find an existed arena.\n", (unsigned int)tid);
+            pthread_mutex_lock(&global_lock);
             ArenaHeader *current = mainThreadStart;
             while((current != NULL) && (current->status == 1)) {
                 current = current->next;
@@ -40,10 +64,11 @@ void *allocateMemory(size_t size){
             current->status = 1;
             arena = current;
             info = (mallinfo*)((char*)current + sizeof(ArenaHeader));
+            pthread_mutex_unlock(&global_lock);
         }
     }
-    info->arenaNum = arenaNum;
     pthread_mutex_lock(&arena->lock);
+    info->arenaNum = arenaNum;
     info->alloReq++;
     //the actual size that needs to require
     BlockHeader *ret = NULL;
@@ -327,7 +352,7 @@ ArenaHeader* init_main_arena()
     info->blockNum = 0;
     info->alloReq = 0;
     info->arenaSize = 0;
-    info->arenaNum = 1;
+    info->arenaNum = 0;
     info->blockFree = 0;
     info->blockUsed = 0;
     info->freeReq = 0;
@@ -359,7 +384,7 @@ ArenaHeader* init_thread_arena()
     info->blockNum = 0;
     info->alloReq = 0;
     info->arenaSize = 0;
-    info->arenaNum = 1;
+    info->arenaNum = 0;
     info->blockFree = 0;
     info->blockUsed = 0;
     info->freeReq = 0;
@@ -421,6 +446,33 @@ void child(void)
     //pthread_mutex_unlock(&global_lock);
 }
 
+//request memory in heap
+void *request_memory_from_sbrk(size_t size){
+    void *ret = sbrk(0);
+    if((sbrk(size)) == (void *)-1) {
+        errno = ENOMEM;
+        return NULL;
+    }
+    return ret;
+}
+
+/*
+ * Create a thread header
+ */
+void create_thread_header(ArenaHeader *arena){
+    ThreadHeader *th = request_memory_from_sbrk(sizeof(ThreadHeader));
+    th->arena = arena;
+    th->tid = pthread_self();
+    th->next = NULL;
+
+    if(startThreadHeader == NULL) {
+        th->next = th;
+        startThreadHeader = th;
+    }
+    ThreadHeader *current = startThreadHeader;
+    th->next = current->next;
+    current->next = th;
+}
 
 //
 //size_t align8(size_t s) {
