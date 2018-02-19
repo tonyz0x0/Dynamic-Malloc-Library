@@ -67,6 +67,8 @@ typedef struct threadheader{
  * global variables
  */
 extern ArenaHeader *mainThreadStart;
+extern int arenaNum;
+extern unsigned long int arenaSize;
 
 /*
  * struct for malloc info

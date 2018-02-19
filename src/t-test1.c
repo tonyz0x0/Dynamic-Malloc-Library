@@ -21,7 +21,7 @@
 
 #define N_TOTAL		50
 #ifndef N_THREADS
-#define N_THREADS	5
+#define N_THREADS	10
 #endif
 #ifndef N_TOTAL_PRINT
 #define N_TOTAL_PRINT 50

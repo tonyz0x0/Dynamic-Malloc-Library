@@ -5,6 +5,9 @@ void malloc_stats(void) {
     ArenaHeader *currentArena = mainThreadStart;
     mallinfo *currentInfo = (mallinfo*)((char*)currentArena + sizeof(ArenaHeader));
     printf("**********Malloc Stats***************\n");
+    printf("\n===========Total Information=============\n");
+    printf("**Total Size of Arena Allocated: %lu\n", arenaSize);
+    printf("**Total Number of Arena: %d\n", arenaNum);
     int i = 1;
     do {
         printf("\n====Arena %d====\n", i);
@@ -17,8 +20,4 @@ void malloc_stats(void) {
         currentArena = currentArena->next;
         currentInfo = (mallinfo*)((char*)currentArena + sizeof(ArenaHeader));
     } while((currentArena != mainThreadStart) && (i <= NUM_ARENA_64));
-    printf("\n===========Total Information=============\n");
-    currentInfo = (mallinfo*)((char*)currentArena->next + sizeof(ArenaHeader));
-    printf("**Total Size of Arena Allocated: %lu\n", currentInfo->arenaSize);
-    printf("**Total Number of Arena: %lu\n", currentInfo->arenaNum);
 }
