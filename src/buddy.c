@@ -47,6 +47,7 @@ void *allocateMemory(size_t size){
         } else {
             //debug_print("Thread tid: %u goes to find an existed arena.\n", (unsigned int)tid);
             //pthread_mutex_lock(&global_lock);
+            pthread_mutex_unlock(&global_lock);
             ArenaHeader *current = mainThreadStart;
             while((current != NULL) && (current->status == 1)) {
                 current = current->next;
@@ -54,7 +55,7 @@ void *allocateMemory(size_t size){
             current->status = 1;
             arena = current;
             info = (mallinfo*)((char*)current + sizeof(ArenaHeader));
-            pthread_mutex_unlock(&global_lock);
+            //pthread_mutex_unlock(&global_lock);
         }
     }
     pthread_mutex_lock(&arena->lock);
